@@ -1,0 +1,397 @@
+---
+title: "TP noté Machine Learning"
+author: "Sokhna Penda Toure & Fernanda Tchouacheu"
+date: "21 octobre 2019"
+output: pdf_document
+---
+
+Ce projet a pour objectif la reconnaissance grace au machine learning des chiffres (allant de 0 à 9) écrit à la main. Ces écritures sont caractérisées par les pixels formant leur image ce qui nous donne 257 variables.
+
+Les données sont subdivisées en deux parties:
+
+- Des données Train  
+- Des données Test  
+
+ 
+## Téléchargement des données Train et Test
+
+```{r,include=FALSE}
+library(ElemStatLearn)
+library(tidyverse)
+library(ggplot2)
+library(tree)
+library(e1071)
+library(class)
+library(FNN)
+library(RWeka)
+library(MASS)
+library(randomForest)
+library(caret)
+library(gbm)
+library(adabag)
+```
+
+```{r}
+data(zip.train);
+data(zip.test)
+```
+
+
+## Présentation et visualistion des données
+
+Il s'agit ici de chiffres manuscrits normalisées, numérisées automatiquement à partir des enveloppes par le service postal américain. Les chiffres scannées sont de tailles et d'orientations différentes. Les images ont été décomposées et normalisées en taille, ce qui donne des images en niveaux de gris de 16 x 16.
+Les données sont dans deux fichiers test et train et chaque ligne est composée de l'identifiant du chiffre (0-9) suivi des 256 valeurs de pixels.
+
+```{r,include=FALSE}
+par(mfrow=c(1,4));
+image(zip2image(zip.train,1), col=gray(256:0/256), zlim=c(0,1), xlab="", ylab="",xaxt="n",yaxt="n");
+image(zip2image(zip.train,2), col=gray(256:0/256), zlim=c(0,1), xlab="", ylab="",xaxt="n",yaxt="n");
+image(zip2image(zip.train,3), col=gray(256:0/256), zlim=c(0,1), xlab="", ylab="",xaxt="n",yaxt="n");
+image(zip2image(zip.train,4), col=gray(256:0/256), zlim=c(0,1), xlab="", ylab="",xaxt="n",yaxt="n");
+```
+Nous allons voir ici la répartition des différents chiffres des datasets. Cela nous permettra d'avoir une vue d'ensemble de notre jeu de données et de voir si les deux échantillons sont bien  **stratifiés**
+
+### Dataset Train
+
+```{r,echo=FALSE}
+zip_train_factor=data.frame(zip.train)
+zip_train_factor$X1=as.factor(zip_train_factor$X1)
+resTable <- table(zip_train_factor$X1) 
+par(mfrow = c(1, 1)) 
+par(mar = c(5, 4, 4, 2) + 0.1) 
+
+plot <- plot(zip_train_factor$X1, main = "Nombre total de chiffres (Training Set)", 
+  ylim = c(0, 1500))
+text(x = plot, y = resTable + 50, labels = resTable, cex = 0.75)
+```
+### Dataset Test
+
+```{r,echo=FALSE}
+zip_test_factor=data.frame(zip.test)
+zip_test_factor$X1=as.factor(zip_test_factor$X1)
+resTable <- table(zip_test_factor$X1) 
+##bar plot
+par(mfrow = c(1, 1)) 
+# increase y-axis margin.
+par(mar = c(5, 4, 4, 2) + 0.1) 
+
+plot <- plot(zip_test_factor$X1, main = "Nombre total de chiffres (Testing Set)", 
+  ylim = c(0, 500), ylab = "Examples Number")
+text(x = plot, y = resTable + 50, labels = resTable, cex = 0.75)
+```
+Nous constatons que les chiffres les plus fréquents sont le 0 et le 1 avec des occurences de respectivement 1194 et 1005 dans train. Les autres chiffres ayant des occurences entre 500 et 700. On se rend compte aussi que la répartition des chiffres est dans l'ensemble la même dans les deux jeux de données.
+Cela permettra donc de tester notre modèle sur un jeu de données avec une structure similaire à nos données d'entrainement.
+
+# Construction de la nouvelle base de données Train et Test
+
+Nous avons choisi d'utiliser **les chiffres 3 et 8** pour notre étude, ces deux chiffres se ressemblant assez, cela nous permettra d'avoir une réelle vision de la performance de notre modèle. De ce fait, nous sélectionnons les données de labels 3 et 8 ce qui nous fait 1303 données de train et 303 données de test. Nous effectuons par la suite la séparation entre les labels et les vecteurs image (xtrain et xtest).
+
+
+```{r,echo=FALSE}
+zip.test=data.frame(zip.test)
+zip.train=data.frame(zip.train)
+
+
+xtrain=filter(zip.train, X1==3 | X1==8)
+xtest=filter(zip.test, X1==3 | X1==8)
+
+# créer la variable label dans la dataFrame train
+xtrain$label=as.factor(xtrain$X1==3)
+xtrain$label=recode_factor(xtrain$label,"FALSE"=8,"TRUE"=3)
+
+# Créer la variable label dans la dataFrame Test
+xtest$label=as.factor(xtest$X1==3)
+xtest$label=recode_factor(xtest$label,"FALSE"=8,"TRUE"=3)
+```
+
+ 
+
+## Comptage du nombre de chiffre dans chacune des Datasets
+
+### Train dataset
+
+```{r, include=FALSE}
+ggplot(data = xtrain) + 
+geom_bar(mapping = aes(x = label, group = 1),color="blue", fill="white")
+ 
+```
+Dans cette dataset les labels ne sont équilibrés
+
+### Test Dataset
+
+```{r,include=FALSE}
+ggplot(data =xtest) + 
+geom_bar(mapping = aes(x = label, group = 1),color="blue", fill="white")
+```
+On a donc des données bien stratifié
+
+
+# Apprendissage des données & Evaluation du modèle
+
+L'étape de l'analyse et de la structuration de nos données étant passée, il s'agira maintenant d'utiliser différents modèles de classification binaire afin de comparer leur efficacités sur nos données et ainsi trouver le modèle le plus adéquat à notre étude. Nous avons ainsi sélectionné un certain nombre de modèles que sont :
+
+1- le KNN
+
+2- le Naive Bayes
+
+3- le Linear Discriminant Analysis (LDA)
+
+4- le Random Forest
+
+5- le Neural Network(nnet)
+
+6- les Arbres de décision
+
+7- le Boosting
+
+8- le Bagging
+
+9- le Gradient boosting model
+
+## 1-k-Nearest Neighbors (KNN) Algorithm
+```{r,echo=FALSE}
+model.Knn =IBk(label~.,data=xtrain)
+```
+
+### description
+
+```{r,include=FALSE}
+summary(model.Knn)
+```
+
+### prediction 
+
+```{r,include=FALSE}
+prediction.knn <- predict(model.Knn, newdata = xtest[,-258], type = "class")
+```
+
+### Table de confusion 
+
+```{r,include=FALSE}
+table(`reel class`= xtest$label,`predict class`= prediction.knn)
+```
+
+### Accuracy
+
+```{r,echo=FALSE}
+erreur = sum(xtest$label != prediction.knn)/ nrow(xtest)
+print(paste0("accuracy:", 1-erreur))
+```
+ 
+
+##  2-NAIVE BAYES
+
+```{r,include=FALSE}
+model.NB = naiveBayes(as.factor(xtrain$X1)~.,data=xtrain)
+```
+
+```{r,include=FALSE}
+summary(model.NB) ##output of the model
+```
+
+### Prediction & matrix de confusion
+
+```{r,include=FALSE}
+prediction.NB = predict(model.NB,xtest[,-258],type='class')
+
+confusionMatrix(prediction.NB,as.factor(xtest$X1))
+```
+
+Nous constatons qu'il y a beaucoup d'erreur dans la prédiction de la classe 8 avec notament 55 chiffres de classe réelle 8 et qui ont été identifiés comme 3 par le modèle.
+Cela nous fait donc une accuracy de **0,81** que nous allons essayer d'améliorer dans les modèles suivant.
+
+
+Le troisième modèle est le **linear discriminant analysis**. Nous l'utilisons car nos données sont bien stratifiées, le LDA fonctionnant très mal sur des données mal équilibrées.
+
+## 3-LDA
+
+```{r,include=FALSE}
+library(MASS)
+pc <- proc.time()
+model.lda=lda(label~., data = xtrain[,-1]);
+proc.time() - pc
+```
+
+### Prediction & matrix de confusion
+
+```{r,include=FALSE}
+prediction.lda <- predict(model.lda, newdata = xtest[,-c(1,258)], type = "class") 
+
+confusionMatrix(prediction.lda$class,xtest$label)
+
+ 
+```
+Nous constatons dejà une nette amélioration par rapport au Naive Bayes. En effet, le nombre d'erreur d'identification de la classe 8 passant de 55 à 10.  Cela se traduit par une accuracy de **95%**, ce qui est déjà un bien meilleur résultat.
+
+## 4-Randomn Forest
+
+```{r,include=FALSE}
+model.RF= randomForest(label~., data = xtrain[,-1],type="class")
+```
+
+L’importance des variables dans le modèle, pour cela nous allons utiliser l’indice Mean Decrease Gini. Plus cet indicateur est élevé plus la variable est importante dans le modèle (il mesure la diminution de l’indice de Gini si l’on n’intégrait plus cette variable dans le modèle)
+
+```{r,echo=FALSE}
+imp<-importance(model.RF)
+vars<-dimnames(imp)[[1]]
+imp<-data.frame(vars=vars,imp=as.numeric(imp[,1]))
+imp<-imp[order(imp$imp,decreasing=T),]
+varImpPlot(model.RF,main='Importance des variables: Base Model')
+#model.RF$importance[order(model.RF$importance[, 1], 
+ #                           decreasing = TRUE), ]
+```
+
+```{r,include=FALSE}
+set.seed(123)
+plot(model.RF,main='Erreur vs Nombre arbres: Base Model')
+```
+
+Nous voyons que la courbe se stabilise aux alentours de 220 arbres. Nous allons donc effectuer le Random Forest avec ntree=220.
+
+### Prediction & matrix de confusion
+
+```{r,include=FALSE}
+model1.RF<-randomForest( label ~ ., data = xtrain[,-1] ,type="class",keep.forest=T, ntree=220)
+ 
+predDF <- predict(model1.RF,xtest[,-c(1,258)])
+#predDF=data.frame(predDF)
+#table('Actual Class' = test_sub$X1, 'Predicted Class' = predDF$predDF)
+
+confusionMatrix(predDF,xtest$label)
+```
+
+Le nombre d'erreur est encore un fois réduit grace au **Random Forest** comme nous pouvons le voir avec le matrice de confusion ci-dessus et avec l'accuracy qui augmente à **97%**.
+
+## 5-NNET
+```{r,include=FALSE}
+library(nnet)
+net1<-nnet(label~., data=xtrain[,-1], size=20, MaxNWts=6000)
+```
+
+### Prediction & accuracy
+
+```{r,include=FALSE}
+prediction.nnet<-predict(net1,xtest,type="class")
+sum(prediction.nnet==xtest$label)/nrow(xtest)
+```
+l'accuracy est de **0.9668675**
+
+## 6-Arbres de décision Rpart
+
+```{r,include=FALSE}
+model.rpart <- rpart(label ~ .,method = "class", data = xtrain[,-1])
+```
+
+L'image suivante nous permet de visualiser la construction des arbres ainsi que le processus de détermination de chaque classe.
+
+```{r,echo=FALSE}
+library(rpart.plot)
+heat.tree <- function(tree, low.is.green=FALSE, ...) { # dots args passed to prp
+y <- model.rpart$frame$yval
+if(low.is.green)
+y <- -y
+max <- max(y)
+min <- min(y)
+cols <- rainbow(99, end=.36)[
+ifelse(y > y[1], (y-y[1]) * (99-50) / (max-y[1]) + 50,
+(y-min) * (50-1) / (y[1]-min) + 1)]
+prp(model.rpart,   ...)
+}
+
+heat.tree(model.rpart, type=4, varlen=0, faclen=0, fallen.leaves=TRUE)
+```
+
+```{r,include=FALSE}
+prp(model.rpart, extra=6)
+```
+
+### Prediction & matrix de confusion
+
+```{r,include=FALSE}
+prediction.rpart <- predict(model.rpart, newdata = xtest[,-c(1,258)], type = "class")
+
+confusionMatrix(xtest$label,prediction.rpart )
+```
+
+Avec la matrice de confusion nous voyons que le modèle présente d'assez bon résultats même si ces derniers sont moins bons que ceux du KNN et du Random Forest. De même, l'accuracy baisse un peu en prenant la valeur de **92%**.
+
+## 7-Boosting
+
+```{r,include=FALSE}
+#algorithme boosting
+
+m.boosting <- boosting(label ~ ., data = xtrain[,-1], boos = FALSE, mfinal = 100, coeflearn = 'Zhu')
+
+#prédiction
+prediction.boost<- predict(m.boosting, newdata =xtest[,-c(1,258)])
+
+#taux d’erreur en test
+confusionMatrix(as.factor(xtest$X1),as.factor(prediction.boost$class))
+```
+On a une accuracy de **0.972** ce qui est déjà très bien.
+
+## 8-Bagging
+
+```{r,include=FALSE}
+#algorithme bagging
+model.bagging <- bagging(label ~ ., data =xtrain[,-1], mfinal=100, control=list(cp=0,minsplit=2,minbucket=1))
+
+#Prediction
+prediction.bagging <- predict(model.bagging,newdata=xtest[,-c(1,258)])
+
+# matrix de confusion
+confusionMatrix(as.factor(xtest$X1),as.factor(prediction.bagging$class))
+
+```
+On a une accuracy de **0.963** ce qui est moins élevée que celui du **boosting**
+
+## 9-stochastic gradient boosting model using the caret package
+
+```{r,include=FALSE}
+ 
+model.gbm = gbm(label~.,data=xtrain[,-c(1,259)],distribution="multinomial",
+                   n.trees =1000,interaction.depth= 4,shrinkage = 0.01,cv.folds = 3)
+
+ntree_opt_cv=gbm.perf(model.gbm,method = "cv")
+ntree_opt_OOB=gbm.perf(model.gbm,method = "OOB")
+
+print(ntree_opt_cv)
+print(ntree_opt_OOB)
+```
+```{r,include=FALSE}
+print(head(summary(model.gbm),10))
+```
+Affiche les variables qui ont le plus contribué dans la prediction des données
+
+### prediction
+
+```{r,include=FALSE}
+prediction.gbm = predict(object=model.gbm,newdata=xtest[,-c(1,258)],n.trees = ntree_opt_cv,type="response")
+```
+
+Pour chaque ligne, la prédiction correspond à la colonne présentant la valeur la plus élevée. Nous utilisons la commande suivante pour identifier la prédiction pour chaque individu
+
+```{r,include=FALSE}
+y.gbm.predict<- factor(levels(xtrain$label)[apply(prediction.gbm[,,1],1,which.max)])
+```
+
+### Matrix de confusion
+
+```{r,include=FALSE}
+confusionMatrix(as.factor(xtest$X1),y.gbm.predict)
+```
+Nous avons une accuracy de **0.966** ce qui va dans le bon sens.Bien sûr, en ajustant finement les paramètres du gradient boosting, nous devrions atteindre
+le même niveau de performance que le boosting « classique ». Mais encore faut-il pouvoir
+identifier les bonnes valeurs des bons paramètres.
+
+## conclusion
+
+```{r,echo= FALSE}
+accuracy = data.frame("Modèles"=c("Knn","Naive Bayes","LDA","Random Forest","Neural Network","rpart","Boosting","Bagging","Gradient boosting"),"scores"=c(0.969,0.810,0.951, 0.972,0.966,0.92,0.972,0.963,0.966))
+
+accuracy
+```
+
+On remarque que les modèles ensemblistes tel que: **Boosting** et **Random Forest** qui ont les accuracy les plus élevées donc plus performant pour  la prediction des labels.
+ 
+
